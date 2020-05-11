@@ -1,0 +1,4 @@
+venv/
+.idea/
+.gitconfig
+git_commit_template.txt
