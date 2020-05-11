@@ -14,9 +14,11 @@ def parse_command_line():
     """
     parser = argparse.ArgumentParser(description='Average Phred score per base calculator')
     # Add a positional argument for the FASTQ file path.
-    parser.add_argument('fastq_file', help='path to the file containing FASTQ reads', type=str, nargs=1)
-    # Add an argument for assigning the number of threads to use.
-    parser.add_argument('-t', '--threads', help='number of threads to assign', type=int, default=2)
+    parser.add_argument('input_fastq', help='input FASTQ file path', type=str, nargs=1)
+    # Add an optional argument for assigning the number of threads to use.
+    parser.add_argument('-n', '--processes', help='number of processes to assign', type=int, default=2)
+    # Add an optional argument for outputting the results to a CSV file.
+    parser.add_argument('-o', '--output', help='output CSV file path', type=str)
 
     args = parser.parse_args()
 
