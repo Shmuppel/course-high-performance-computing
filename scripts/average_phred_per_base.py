@@ -3,6 +3,7 @@
 import os
 import argparse
 import subprocess
+import numpy as np
 
 
 def parse_command_line():
@@ -11,7 +12,7 @@ def parse_command_line():
     requires to run.
 
     :return args (namespace object): The arguments passed by the user parsed into a single
-    namespace object.
+                                     namespace object.
     """
     parser = argparse.ArgumentParser(description='Average Phred score per base calculator')
     # Add a positional argument for the FASTQ file path.
@@ -26,7 +27,7 @@ def parse_command_line():
     return args
 
 
-def get_phred_scores(file_path):
+def get_phred_score_lines(file_path):
     """
     Retrieves all lines containing Phred scores from a FastQ file and stores them in a list.
     Has sed as a dependency to parse every fourth line.
@@ -34,20 +35,40 @@ def get_phred_scores(file_path):
     :param file_path: path pointing to a FastQ file.
     :return phred_scores: a list containing strings of Phred scores per read.
     """
-    # Retrieve absolute path in case data is stored in working directory.
-    absolute_file_path = os.path.abspath(file_path)
+    # Create a sed process that parses every 4th line (0~4p), and strips newline (s/\\n$//).
+    get_4th_lines = subprocess.Popen("sed -n '0~4p' " + file_path,
+                                     shell=True,
+                                     stdout=subprocess.PIPE,
+                                     universal_newlines=True)
+    # Subprocess will then pipe the output.
+    phred_score_lines = get_4th_lines.stdout.readlines()
 
-    # Create a sed process that parses every 4th line, subprocess will pipe the output.
-    get_4th_lines = subprocess.Popen("sed -n '0~4p' " + absolute_file_path, shell=True,
-                                     stdout=subprocess.PIPE, universal_newlines=True)
-    phred_scores = get_4th_lines.stdout.readlines()
+    return phred_score_lines
 
-    return phred_scores
+
+def preallocate_numpy_matrix(phred_score_lines):
+    """
+    Preallocate a numpy matrix containing NaN values given a list of Phred score strings.
+    Its dimensions are (number of reads/strings, longest read length).
+
+    :param phred_score_lines: list of Phred score strings.
+    :return phred_score_matrix: numpy matrix filled with NaN values for every possible base location.
+    """
+    rows = len(phred_score_lines)
+    columns = len(max(phred_score_lines, key=len))
+    phred_score_matrix = np.full(shape=(rows, columns), fill_value=np.nan)
+
+    return phred_score_matrix
 
 
 def main():
     args = parse_command_line()
-    phred_scores = get_phred_scores(args.input_fastq[0])
+
+    # Retrieve absolute path in case data is stored in working directory.
+    file_path = os.path.abspath(args.input_fastq[0])
+
+    phred_score_lines = get_phred_score_lines(file_path)
+    phred_score_matrix = preallocate_numpy_matrix(phred_score_lines)
 
 
 if __name__ == "__main__":
