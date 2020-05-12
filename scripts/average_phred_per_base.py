@@ -40,8 +40,8 @@ def get_phred_score_lines(file_path):
                                      shell=True,
                                      stdout=subprocess.PIPE,
                                      universal_newlines=True)
-    # Subprocess will then pipe the output.
-    phred_score_lines = get_4th_lines.stdout.readlines()
+    # Subprocess will pipe the output, lines are stripped of whitespace / newline characters.
+    phred_score_lines = [line.strip() for line in get_4th_lines.stdout.readlines()]
 
     return phred_score_lines
 
@@ -56,22 +56,9 @@ def preallocate_numpy_matrix(phred_score_lines):
     """
     rows = len(phred_score_lines)
     columns = len(max(phred_score_lines, key=len))
-
     phred_score_matrix = np.full(shape=(rows, columns), fill_value=np.nan)
 
     return phred_score_matrix
-
-
-def phred_lines_to_chars(phred_score_lines):
-    """
-    Given a list of Phred score strings, unpack each string into a list of its individual characters.
-
-    :param phred_score_lines: list of Phred score strings.
-    :return phred_score_chars: list of lists containing Phred score characters.
-    """
-    phred_score_chars = [[*line.strip()] for line in phred_score_lines]
-
-    return phred_score_chars
 
 
 def main():
@@ -80,10 +67,10 @@ def main():
     # Retrieve absolute path in case data is stored in working directory.
     file_path = os.path.abspath(args.input_fastq[0])
 
+    print("> Retrieving Phred score lines from FastQ file.")
     phred_score_lines = get_phred_score_lines(file_path)
-
+    print("> Preallocating NumPy matrix.")
     phred_score_matrix = preallocate_numpy_matrix(phred_score_lines)
-    phred_score_chars = phred_lines_to_chars(phred_score_lines)
 
 
 if __name__ == "__main__":
