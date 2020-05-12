@@ -35,7 +35,7 @@ def get_phred_score_lines(file_path):
     :param file_path: path pointing to a FastQ file.
     :return phred_scores: a list containing strings of Phred scores per read.
     """
-    # Create a sed process that parses every 4th line (0~4p), and strips newline (s/\\n$//).
+    # Create a sed process that parses every 4th line (0~4p).
     get_4th_lines = subprocess.Popen("sed -n '0~4p' " + file_path,
                                      shell=True,
                                      stdout=subprocess.PIPE,
@@ -56,7 +56,28 @@ def preallocate_numpy_matrix(phred_score_lines):
     """
     rows = len(phred_score_lines)
     columns = len(max(phred_score_lines, key=len))
-    phred_score_matrix = np.full(shape=(rows, columns), fill_value=np.nan)
+    # Using data-type 8-bit unsigned integer to save memory (Phred scores can't be negative nor > 104).
+    phred_score_matrix = np.full(shape=(rows, columns), dtype=np.dtype('u1'), fill_value=np.nan)
+
+    return phred_score_matrix
+
+
+def phred_lines_to_matrix(phred_score_lines, phred_score_matrix):
+    """
+    Iterates over a list of Phred score strings, calculating the ASCII value of its characters
+    and placing those values in the Phred score matrix.
+
+    Indices are based on (read, base index), where reads shorter than the longest read will
+    have trailing NaNs.
+
+    :param phred_score_lines: list of Phred score strings.
+    :param phred_score_matrix: numpy matrix filled with NaN values for every possible base location.
+    :return phred_score_matrix: numpy matrix filled with integers (where applicable) or NaN values
+                                for every possible base location.
+    """
+    for i, phred_line in enumerate(phred_score_lines):
+        for j, char in enumerate(phred_line):
+            phred_score_matrix[i, j] = ord(char)
 
     return phred_score_matrix
 
@@ -67,10 +88,14 @@ def main():
     # Retrieve absolute path in case data is stored in working directory.
     file_path = os.path.abspath(args.input_fastq[0])
 
+    # Preparing data.
     print("> Retrieving Phred score lines from FastQ file.")
     phred_score_lines = get_phred_score_lines(file_path)
     print("> Preallocating NumPy matrix.")
     phred_score_matrix = preallocate_numpy_matrix(phred_score_lines)
+
+    print("> Filling NumPy matrix with Phred score integer values.")
+    phred_score_matrix = phred_lines_to_matrix(phred_score_lines, phred_score_matrix)
 
 
 if __name__ == "__main__":
