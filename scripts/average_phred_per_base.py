@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import os
+import math
 import argparse
 import subprocess
 import numpy as np
+import multiprocessing as mp
 
 
 def parse_command_line():
@@ -46,76 +48,87 @@ def get_phred_score_lines(file_path):
     return phred_score_lines
 
 
-# noinspection PyTypeChecker
-def get_process_indices(phred_score_lines_count, no_processes):
-    """
-    :param phred_score_lines_count:
-    :param no_processes:
-    :return:
-    """
-    # Preallocate list to store indices in.
-    indices = [0] * no_processes
-    step = phred_score_lines_count // no_processes
-
-    current_start, current_stop = 0, step
-
-    for i in range(no_processes):
-        # On the first element, add index from 0 to step.
-        if i == 0:
-            indices[i] = [current_start, current_stop]
-        # Between first and last element, add index from latest (+1 to prevent overlap) to latest + step.
-        elif i != no_processes - 1:
-            indices[i] = [current_start + 1, current_stop]
-        # On the last element, add index from latest (+1 to prevent overlap) till the total list count.
-        else:
-            indices[i] = [current_start + 1, phred_score_lines_count]
-            break
-
-        # Increase latest start and stop by step.
-        current_start += step
-        current_stop += step
-
-    return indices
-
-
-def preallocate_numpy_matrix(phred_score_lines_count, start, stop):
+def preallocate_numpy_matrix(phred_score_lines, max_read_length):
     """
     Preallocate a numpy matrix containing NaN values given a list of Phred score strings.
     Its dimensions are (number of reads/strings, longest read length).
 
-    :param start:
-    :param stop:
     :param phred_score_lines_count: list of Phred score strings.
     :return phred_score_matrix: numpy matrix filled with NaN values for every possible base location.
     """
-    rows = stop - start
-    columns = len(max(phred_score_lines_count, key=len))
+    rows = len(phred_score_lines)
+    columns = max_read_length
     # Using data-type 8-bit unsigned integer to save memory (Phred scores can't be negative nor > 104).
     phred_score_matrix = np.full(shape=(rows, columns), dtype=np.dtype('u1'), fill_value=np.nan)
 
     return phred_score_matrix
 
 
-def phred_lines_to_matrix(phred_score_lines, phred_score_matrix, start, stop):
+def phred_lines_to_matrix(phred_score_lines, phred_score_matrix):
     """
     Iterates over a list of Phred score strings, calculating the ASCII value of its characters
     and placing those values in the Phred score matrix.
 
-    Indices are based on (read, base index), where reads shorter than the longest read will
+    Indices of the matrix are (read, base index), where reads shorter than the longest read will
     have trailing NaNs.
 
-    :param stop:
-    :param start:
     :param phred_score_lines: list of Phred score strings.
     :param phred_score_matrix: numpy matrix filled with NaN values for every possible base location.
     :return phred_score_matrix: numpy matrix filled with integers (where applicable) or NaN values
                                 for every possible base location.
     """
-    for i, phred_line in enumerate(phred_score_lines[start:stop]):
-        for j, char in enumerate(phred_line):
-            phred_score_matrix[i, j] = ord(char)
+    for i, phred_line in enumerate(phred_score_lines):
+        phred_score_matrix[i, 0:len(phred_line)] = [ord(char) for char in phred_line]
 
     return phred_score_matrix
+
+
+def process_function(process_no, phred_score_lines_subset, max_read_length, output_queue):
+    """
+    WIP: Example of functions to be called by each process.
+
+    :return:
+    """
+    print("{process} - Preallocating NumPy matrix subset...".format(process=process_no))
+    phred_score_matrix = preallocate_numpy_matrix(phred_score_lines_subset, max_read_length)
+    print("{process} - Filling matrix with numerical Phred scores...".format(process=process_no))
+    phred_score_matrix = phred_lines_to_matrix(phred_score_lines_subset, phred_score_matrix)
+
+    output_queue.put(phred_score_matrix)
+
+    return 0
+
+
+def multiprocess(no_processes, phred_score_lines):
+    """
+    :param no_processes:
+    :param phred_score_lines:
+    :return:
+    """
+    processes = []
+    output_queue = mp.Queue()
+
+    phred_score_lines_count = len(phred_score_lines)
+    max_read_length = len(max(phred_score_lines, key=len))
+    chunk_size = int(math.ceil(phred_score_lines_count / no_processes))
+
+    for p in range(no_processes):
+        phred_score_lines_subset = phred_score_lines[chunk_size * p: chunk_size * (p + 1)]
+        process = mp.Process(target=process_function,
+                             args=(p + 1,
+                                   phred_score_lines_subset,
+                                   max_read_length,
+                                   output_queue))
+        processes.append(process)
+        process.start()
+
+    # Retrieve output from processes.
+    output = [output_queue.get() for p in processes]
+
+    for p in processes:
+        p.join()
+
+    return output
 
 
 def calculate_average_phred_per_base(phred_score_matrix):
@@ -131,43 +144,23 @@ def calculate_average_phred_per_base(phred_score_matrix):
     return average_phred_per_base
 
 
-def process_call(no_processes, process_indices, phred_score_lines):
-    """
-    WIP: Example of functions to be called by each process.
-
-    :return:
-    """
-    for n in range(no_processes):
-        start = process_indices[n][0]
-        stop = process_indices[n][1]
-        print("> Preallocating NumPy matrix subset...")
-        phred_score_matrix = preallocate_numpy_matrix(phred_score_lines, start, stop)
-        print("> Calculating...")
-        phred_score_matrix = phred_lines_to_matrix(phred_score_lines, phred_score_matrix, start, stop)
-
-
 def main():
     args = parse_command_line()
-
     # Retrieve absolute path in case data is stored in working directory.
     file_path = os.path.abspath(args.input_fastq[0])
     no_processes = args.processes
 
-    # Preparing data.
     print("> Retrieving Phred score lines from FastQ file...")
     phred_score_lines = get_phred_score_lines(file_path)
-    phred_score_lines_count = len(phred_score_lines)
-    print("> Getting indices for processes...")
-    process_indices = get_process_indices(phred_score_lines_count, args.processes)
 
-    # Multiprocessing tasks
-    process_call(no_processes, process_indices, phred_score_lines)
+    print("> Starting multiple processes...")
+    phred_score_matrices = multiprocess(no_processes, phred_score_lines)
 
-    # Calculate final results.
-    # print("> Preallocating final NumPy matrix...")
-    # phred_score_matrix = preallocate_numpy_matrix(phred_score_lines, start=0, stop=phred_score_lines_count)
-    # print("> Calculating average Phred score per base location...")
-    # average_phred_per_base = calculate_average_phred_per_base(phred_score_matrix)
+    print("> Combining process results into matrix...")
+    phred_score_matrix = np.vstack(phred_score_matrices)
+
+    print("> Calculating average Phred score per base location...")
+    average_phred_per_base = calculate_average_phred_per_base(phred_score_matrix)
 
 
 if __name__ == "__main__":
