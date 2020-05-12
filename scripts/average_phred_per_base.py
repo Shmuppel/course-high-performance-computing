@@ -82,6 +82,19 @@ def phred_lines_to_matrix(phred_score_lines, phred_score_matrix):
     return phred_score_matrix
 
 
+def calculate_average_phred_per_base(phred_score_matrix):
+    """
+    Calculates the average value along each Phred score matrix column.
+
+    :param phred_score_matrix: numpy matrix filled with integers (where applicable) or NaN values.
+    :return average_phred_per_base: numpy array containing average Phred score per base location.
+    """
+    # matrix.nanmean to support the trailing NaN values for bases shorter than the longest read.
+    average_phred_per_base = np.round(np.nanmean(phred_score_matrix, axis=0), decimals=2)
+
+    return average_phred_per_base
+
+
 def main():
     args = parse_command_line()
 
@@ -96,6 +109,9 @@ def main():
 
     print("> Filling NumPy matrix with Phred score integer values.")
     phred_score_matrix = phred_lines_to_matrix(phred_score_lines, phred_score_matrix)
+
+    print("> Calculating average Phred score per base location.")
+    average_phred_per_base = calculate_average_phred_per_base(phred_score_matrix)
 
 
 if __name__ == "__main__":
