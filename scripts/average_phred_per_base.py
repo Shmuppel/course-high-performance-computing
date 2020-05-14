@@ -215,7 +215,6 @@ def main():
 
     # Retrieve absolute path in case data is stored in working directory.
     input_file_path = os.path.abspath(args.input_fastq[0])
-    output_file_path = os.path.abspath(args.output)
     no_processes = args.processes
 
     # FastQ file handling.
@@ -227,7 +226,8 @@ def main():
     average_phred_per_base = average_phred_calculator.calculate_average_phred_per_base()
 
     # If output path is given, save results to file.
-    if output_file_path is not None:
+    if args.output is not None:
+        output_file_path = os.path.abspath(args.output)
         output_results_to_csv(output_file_path, average_phred_per_base)
     else:
         print(np.round(average_phred_per_base, decimals=2))
