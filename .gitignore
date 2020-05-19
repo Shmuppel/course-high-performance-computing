@@ -1,5 +1,6 @@
 venv/
 data/
+reference/
 .idea/
 .gitconfig
 git_commit_template.txt
