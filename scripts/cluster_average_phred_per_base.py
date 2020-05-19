@@ -150,7 +150,7 @@ class AveragePhredCalculator:
         :return phred_score_matrix: numpy matrix filled with integers (where applicable) or NaN values.
         """
         for i, phred_line in enumerate(phred_score_lines):
-            phred_score_matrix[i, 0:len(phred_line)] = [ord(char) for char in phred_line]
+            phred_score_matrix[i, 0:len(phred_line)] = [ord(char) - 33 for char in phred_line]
 
         return phred_score_matrix
 
