@@ -155,18 +155,51 @@ class Client:
 
 class Server:
 
-    def __init__(self, function, file_path, port):
+    def __init__(self, file_path, function, port, no_clients, authkey):
         """
-
+        :param file_path:
+        :param function:
+        :param port:
+        :param no_clients:
         """
         self.file_path = file_path
         self.function = function
+        self.port = port
 
-        self.manager = self.initialize_server_manager(port, b'authentication')
-        self.shared_job_queue = self.manager.get_job_queue()
-        self.shared_result_queue = self.manager.get_result_queue()
+        self.chunks = self.get_chunk_indices(no_clients)
+        self.manager = self.__initialize_server_manager(port, authkey)
 
-    def initialize_server_manager(self, port, authkey):
+        self.__run_server()
+
+    def get_file_length(self):
+        """
+        :return:
+        """
+        output = subprocess.run(['wc', '-l', self.file_path], capture_output=True, text=True)
+        # get first element from wc -l output (lines in file)
+        output = int(output.stdout.split()[0])
+
+        return output
+
+    def get_chunk_indices(self, no_clients):
+        """
+        :param no_clients:
+        :return:
+        """
+        file_length = self.get_file_length()
+        chunks = []
+
+        chunk_size = math.ceil(file_length / no_clients)
+        chunk_size += chunk_size % 4
+
+        for client in range(no_clients):
+            chunks.append((chunk_size * client,
+                           chunk_size * (client + 1)))
+
+        print(chunks)
+        return chunks
+
+    def __initialize_server_manager(self, port, authkey):
         """
         :param port:
         :param authkey:
@@ -180,36 +213,38 @@ class Server:
 
         ServerManager.register('get_job_queue', callable=lambda: job_queue)
         ServerManager.register('get_result_queue', callable=lambda: result_queue)
-
         manager = ServerManager(address=('', port), authkey=authkey)
         manager.start()
 
         return manager
 
-    def run_server(self):
+    def __run_server(self):
         """
         :return:
         """
-        for item in self.data:
-            self.shared_job_queue.put({'function': self.function, 'data': item})
+        shared_job_queue = self.manager.get_job_queue()
+        shared_result_queue = self.manager.get_result_queue()
 
-        time.sleep(2)
+        for chunk_indices in self.chunks:
+            shared_job_queue.put({'function': self.function, 'data': chunk_indices})
+            print(chunk_indices)
 
         results = []
         while True:
             try:
-                result = self.shared_result_queue.get_nowait()
+                result = shared_result_queue.get_nowait()
                 results.append(result)
 
-                if len(results) == len(self.data):
+                if len(results) == len(self.chunks):
                     break
 
             except queue.Empty:
-                time.sleep(1)
-                continue
+                time.sleep(10)
+                break
 
-        self.shared_job_queue.put("KILL")
+        shared_job_queue.put("KILL")
         time.sleep(5)
+
         self.manager.shutdown()
         print(results)
 
@@ -221,15 +256,15 @@ def parse_command_line():
     :return args: The arguments passed by the user parsed into a single namespace object.
     """
     parser = argparse.ArgumentParser(description='Average Phred score per base calculator')
-    parser.add_argument('-f', '--input_fastq', help='input FASTQ file path', type=str, required=True)
+    parser.add_argument('-f', '--input_fastq', help='input FASTQ file path', type=str, required=True, nargs=1)
     parser.add_argument('-o', '--output', help='output CSV file path', type=str)
     parser.add_argument('-n', '--processes', help='number of processes to assign per client', type=int, default=4)
     parser.add_argument('-p', '--port', help='port to use for server-host communication', type=int, required=True)
-    parser.add_argument('--hosts', help='hosts, first host should refer to the server', type=str, required=True)
+    parser.add_argument('--hosts', help='hosts, first host should refer to the server', type=str, required=True, nargs='+')
 
     execution_type = parser.add_mutually_exclusive_group(required=True)
     execution_type.add_argument('-c', '--client', help='run script as client', action='store_false')
-    execution_type.add_argument('-s', '--server',  help='run script as server', action='store_true')
+    execution_type.add_argument('-s', '--server', help='run script as server', action='store_true')
 
     args = parser.parse_args()
 
@@ -243,23 +278,27 @@ def main():
     :return: 0 when the program finishes correctly.
     """
     args = parse_command_line()
+
+    # get absolute filepath in case a relative path is given.
     input_file_path = os.path.abspath(args.input_fastq[0])
     no_processes = args.processes
     port = args.port
     hosts = args.hosts
     execution_type = args.server
+    authkey = b'authentication'
 
     if execution_type:
-        #execute server
-        server = mp.Process(target=Server, args=(AveragePhredCalculator, input_file_path))
-        #server.start()
-        #server.join()
+        # execute server
+        # TODO change hosts (-1 for server)
+        server = Server(input_file_path, AveragePhredCalculator, port, len(hosts), authkey)
+        # server.start()
+        # server.join()
         pass
     else:
-        #execute client
-        server = mp.Process(target=Client, args=(no_processes))
-        #client.start()
-        #client.join()
+        # execute client
+        # client = mp.Process(target=Client, args=(no_processes))
+        # client.start()
+        # client.join()
         pass
 
 
