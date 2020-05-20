@@ -29,10 +29,9 @@ class AveragePhredCalculator:
         phred_score_matrix = self.__preallocate_numpy_matrix(phred_score_lines_subset)
         print("{process} - Filling matrix with numerical Phred scores...".format(process=process_no))
         phred_score_matrix = self.__phred_lines_to_matrix(phred_score_lines_subset, phred_score_matrix)
-        # TODO - Average results, send those results back
-
-        # Add process results to output queue.
-        output_queue.put(phred_score_matrix)
+        # TODO: Cleanup average declaration
+        # Add process average results to output queue.
+        output_queue.put(self.__calculate_average_phred_per_base(phred_score_matrix))
 
     def __preallocate_numpy_matrix(self, phred_score_lines):
         """
@@ -82,28 +81,32 @@ class AveragePhredCalculator:
 
 class Client:
 
-    def __init__(self, file_path, no_workers):
+    def __init__(self, file_path, no_processes, server_ip, port, authkey):
         """
-        Object containing methods using multiprocessing to calculate the average phred per base location,
-        given a list of Phred score strings and the no_processes to use. Initializes a Phred score matrix
-        with integer values representing every Phred score character in every Phred score line.
-
-        :param no_workers: number of process to assign calculations.
+        :param file_path:
+        :param no_processes:
+        :param server_ip:
+        :param port:
+        :param authkey:
         """
-        phred_score_lines = self.get_phred_score_lines(file_path)
-        phred_score_matrices = self.run_workers(phred_score_lines, no_workers)
-        print(phred_score_matrices)
+        manager = self.__initialize_client_manager(server_ip, port, authkey)
+        job_queue = manager.get_job_queue()
+        result_queue = manager.get_result_queue()
 
-    def get_phred_score_lines(self, file_path):
+        self.__run_client(job_queue, result_queue, file_path, no_processes)
+
+    def get_phred_score_lines(self, file_path, start, stop):
         """
-        Retrieves all lines containing Phred scores from a FastQ file and stores them in a list.
-        Has sed as a dependency to parse every fourth line.
-
-        :return phred_scores: a list containing strings of Phred scores per read.
+        :param file_path:
+        :param start:
+        :param stop:
+        :return:
         """
         print("> Retrieving Phred score lines from FastQ file...")
         # Create a sed process that parses every 4th line (0~4p).
-        get_4th_lines = subprocess.Popen("sed -n '0~4p' " + file_path,
+        get_4th_lines = subprocess.Popen("sed -n '{start}~4p;{stop}q' {file_path}".format(start=start,
+                                                                                         stop=stop,
+                                                                                         file_path=file_path),
                                          shell=True,
                                          stdout=subprocess.PIPE,
                                          universal_newlines=True)
@@ -113,14 +116,59 @@ class Client:
 
         return phred_score_lines
 
-    def run_workers(self, phred_score_lines, no_processes):
+    def __initialize_client_manager(self, server_ip, port, authkey):
         """
-        Starts a specified number of processes, with each process receiving a subset of Phred score
-        string to perform conversion to ASCII values upon.
+        :param server_ip:
+        :param port:
+        :param authkey:
+        :return:
+        """
+        class ClientManager(BaseManager):
+            pass
 
-        :param phred_score_lines: list of Phred score strings.
-        :param no_processes: number of process to assign calculations.
-        :return output: list of NumPy matrices containing each process' results.
+        ClientManager.register('get_job_queue')
+        ClientManager.register('get_result_queue')
+
+        manager = ClientManager(address=(server_ip, port), authkey=authkey)
+        manager.connect()
+
+        print('Client connected to %s:%s' % (server_ip, port))
+
+        return manager
+
+    def __run_client(self, job_queue, result_queue, file_path, no_processes):
+        """
+        :param job_queue:
+        :param result_queue:
+        :param file_path:
+        :param no_processes:
+        :return:
+        """
+        while True:
+            try:
+                job = job_queue.get_nowait()
+
+                if job == "KILL":
+                    job_queue.put("KILL")
+                    break
+                else:
+                    function = job['function']
+                    chunk_indices = job['chunk_indices']
+                    phred_score_lines = self.get_phred_score_lines(file_path, chunk_indices[0], chunk_indices[1])
+                    results = self.__start_processes(phred_score_lines, no_processes)
+                    result_queue.put(results)
+
+            except queue.Empty:
+                print("sleep")
+                time.sleep(1)
+
+
+    def __start_processes(self, phred_score_lines, no_processes):
+        """
+        :param job_queue:
+        :param result_queue:
+        :param no_processes:
+        :return:
         """
         # Initialize multiprocessing variables.
         processes = []
@@ -128,6 +176,7 @@ class Client:
 
         # Initialize data separation related variables.
         phred_score_lines_count = len(phred_score_lines)
+        max_read_length = len(max(phred_score_lines, key=len))
         chunk_size = int(math.ceil(phred_score_lines_count / no_processes))
 
         print("> Starting {n} processes...".format(n=no_processes))
@@ -144,7 +193,8 @@ class Client:
             process.start()
 
         # Retrieve output from processes.
-        output = [output_queue.get() for p in processes]
+        output = np.vstack([output_queue.get() for p in processes])
+        output = np.sum(output, axis=0) / no_processes
 
         # Wait for processes to complete.
         for p in processes:
@@ -155,7 +205,7 @@ class Client:
 
 class Server:
 
-    def __init__(self, file_path, function, port, no_clients, authkey):
+    def __init__(self, file_path, function, no_clients, port, authkey):
         """
         :param file_path:
         :param function:
@@ -196,7 +246,6 @@ class Server:
             chunks.append((chunk_size * client,
                            chunk_size * (client + 1)))
 
-        print(chunks)
         return chunks
 
     def __initialize_server_manager(self, port, authkey):
@@ -213,6 +262,7 @@ class Server:
 
         ServerManager.register('get_job_queue', callable=lambda: job_queue)
         ServerManager.register('get_result_queue', callable=lambda: result_queue)
+
         manager = ServerManager(address=('', port), authkey=authkey)
         manager.start()
 
@@ -226,8 +276,10 @@ class Server:
         shared_result_queue = self.manager.get_result_queue()
 
         for chunk_indices in self.chunks:
-            shared_job_queue.put({'function': self.function, 'data': chunk_indices})
+            shared_job_queue.put({'function': self.function, 'chunk_indices': chunk_indices})
             print(chunk_indices)
+
+        time.sleep(5)
 
         results = []
         while True:
@@ -239,8 +291,10 @@ class Server:
                     break
 
             except queue.Empty:
-                time.sleep(10)
-                break
+                time.sleep(1)
+                continue
+
+        # TODO: calculate average result (/ no clients)
 
         shared_job_queue.put("KILL")
         time.sleep(5)
@@ -251,16 +305,14 @@ class Server:
 
 def parse_command_line():
     """
-    Parses the command line. argparse is used to declare the argument types the script requires to run.
-
-    :return args: The arguments passed by the user parsed into a single namespace object.
+    :return:
     """
     parser = argparse.ArgumentParser(description='Average Phred score per base calculator')
     parser.add_argument('-f', '--input_fastq', help='input FASTQ file path', type=str, required=True, nargs=1)
     parser.add_argument('-o', '--output', help='output CSV file path', type=str)
     parser.add_argument('-n', '--processes', help='number of processes to assign per client', type=int, default=4)
     parser.add_argument('-p', '--port', help='port to use for server-host communication', type=int, required=True)
-    parser.add_argument('--hosts', help='hosts, first host should refer to the server', type=str, required=True, nargs='+')
+    parser.add_argument('--host', help='server ip', type=str, required=True, nargs='+')
 
     execution_type = parser.add_mutually_exclusive_group(required=True)
     execution_type.add_argument('-c', '--client', help='run script as client', action='store_false')
@@ -283,24 +335,21 @@ def main():
     input_file_path = os.path.abspath(args.input_fastq[0])
     no_processes = args.processes
     port = args.port
-    hosts = args.hosts
+    host = args.host
     execution_type = args.server
     authkey = b'authentication'
 
     if execution_type:
         # execute server
-        # TODO change hosts (-1 for server)
-        server = Server(input_file_path, AveragePhredCalculator, port, len(hosts), authkey)
-        # server.start()
-        # server.join()
-        pass
+        # TODO change host
+        server = Server(input_file_path, AveragePhredCalculator, len(host) - 1, port, authkey)
     else:
+        # TODO server ip to actual server
+        server_ip = 'bin201'
         # execute client
-        # client = mp.Process(target=Client, args=(no_processes))
-        # client.start()
-        # client.join()
-        pass
+        client = Client(input_file_path, no_processes, server_ip, port, authkey)
 
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
