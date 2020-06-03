@@ -19,7 +19,6 @@ import multiprocessing as mp
 
 
 class FastQFileHandler:
-
     def __init__(self, file_path):
         """
         Object containing methods for handling FastQ files.
@@ -37,10 +36,9 @@ class FastQFileHandler:
         """
         print("> Retrieving Phred score lines from FastQ file...")
         # Create a sed process that parses every 4th line (0~4p).
-        get_4th_lines = subprocess.Popen("sed -n '0~4p' " + self.file_path,
-                                         shell=True,
-                                         stdout=subprocess.PIPE,
-                                         universal_newlines=True)
+        get_4th_lines = subprocess.Popen(
+            "sed -n '0~4p' " + self.file_path, shell=True, stdout=subprocess.PIPE, universal_newlines=True,
+        )
 
         # Subprocess will pipe the output, lines are stripped of whitespace / newline characters.
         phred_score_lines = [line.strip() for line in get_4th_lines.stdout.readlines()]
@@ -49,7 +47,6 @@ class FastQFileHandler:
 
 
 class AveragePhredCalculator:
-
     def __init__(self, phred_score_lines, no_processes):
         """
         Object containing methods using multiprocessing to calculate the average phred per base location,
@@ -84,13 +81,12 @@ class AveragePhredCalculator:
         print("> Starting {n} processes...".format(n=no_processes))
         for p in range(no_processes):
             process_no = p + 1
-            phred_score_lines_subset = phred_score_lines[chunk_size * p: chunk_size * (p + 1)]
+            phred_score_lines_subset = phred_score_lines[chunk_size * p : chunk_size * (p + 1)]
 
-            process = mp.Process(target=self.__process_function,
-                                 args=(process_no,
-                                       phred_score_lines_subset,
-                                       max_read_length,
-                                       output_queue))
+            process = mp.Process(
+                target=self.__process_function,
+                args=(process_no, phred_score_lines_subset, max_read_length, output_queue,),
+            )
 
             processes.append(process)
             process.start()
@@ -133,9 +129,7 @@ class AveragePhredCalculator:
         columns = max_read_length
 
         # Using data-type 8-bit unsigned integer (u1) to save memory (Phred scores can't be negative nor > 104).
-        phred_score_matrix = np.full(shape=(rows, columns),
-                                     dtype=np.dtype('u1'),
-                                     fill_value=np.nan)
+        phred_score_matrix = np.full(shape=(rows, columns), dtype=np.dtype("u1"), fill_value=np.nan)
 
         return phred_score_matrix
 
@@ -150,7 +144,7 @@ class AveragePhredCalculator:
         :return phred_score_matrix: numpy matrix filled with integers (where applicable) or NaN values.
         """
         for i, phred_line in enumerate(phred_score_lines):
-            phred_score_matrix[i, 0:len(phred_line)] = [ord(char) for char in phred_line]
+            phred_score_matrix[i, 0 : len(phred_line)] = [ord(char) for char in phred_line]
 
         return phred_score_matrix
 
@@ -173,10 +167,10 @@ def parse_command_line():
 
     :return args: The arguments passed by the user parsed into a single namespace object.
     """
-    parser = argparse.ArgumentParser(description='Average Phred score per base calculator')
-    parser.add_argument('input_fastq', help='input FASTQ file path', type=str, nargs=1)
-    parser.add_argument('-n', '--processes', help='number of processes to assign', type=int, default=4)
-    parser.add_argument('-o', '--output', help='output CSV file path', type=str)
+    parser = argparse.ArgumentParser(description="Average Phred score per base calculator")
+    parser.add_argument("input_fastq", help="input FASTQ file path", type=str, nargs=1)
+    parser.add_argument("-n", "--processes", help="number of processes to assign", type=int, default=4)
+    parser.add_argument("-o", "--output", help="output CSV file path", type=str)
 
     args = parser.parse_args()
 
@@ -192,13 +186,12 @@ def output_results_to_csv(output_file_path, average_phred_per_base):
     """
     print("> Saving results to: {output}".format(output=output_file_path))
     try:
-        with open(output_file_path, 'w') as output_file:
-            writer = csv.writer(output_file, delimiter=',')
-            writer.writerow(['base index', 'average phred score'])
+        with open(output_file_path, "w") as output_file:
+            writer = csv.writer(output_file, delimiter=",")
+            writer.writerow(["base index", "average phred score"])
 
             # Write average per base index, round average to 3 decimals.
-            writer.writerows([index + 1, round(average, 3)]
-                             for index, average in enumerate(average_phred_per_base))
+            writer.writerows([index + 1, round(average, 3)] for index, average in enumerate(average_phred_per_base))
 
     except EnvironmentError:
         print("Could not create output file, please check if the given output file path is valid.")
