@@ -9,23 +9,23 @@ import argparse
 import subprocess
 import numpy as np
 import multiprocessing as mp
-from threading import Timer
-from functools import lru_cache
 from multiprocessing.managers import BaseManager
+from functools import lru_cache
+from threading import Timer
 
 
 class AveragePhredCalculator:
     def __init__(self, file_path, chunk_indices, output_queue):
         """
         Worker function to be called for every process. Given a subset of Phred score lines to process,
-        allocate a NumPy matrix and fill it with the strings' character ASCII values. Places resulting
-        NumPy matrix in the shared queue when finished.
+        allocate a NumPy 2D array and fill it with the strings' character respective P-values. Places
+        resulting NumPy 2D array in the shared queue when finished.
         """
         phred_score_lines = self.__get_phred_score_lines(file_path, chunk_indices[0], chunk_indices[1])
         max_read_length = len(max(phred_score_lines, key=len))
         # Convert Phred scores to P values for every Phred line and put the results in a matrix.
-        matrix = self.__preallocate_numpy_matrix(phred_score_lines, max_read_length)
-        p_value_matrix = self.__phred_lines_to_matrix(phred_score_lines, matrix)
+        matrix = self.__preallocate_numpy_array(phred_score_lines, max_read_length)
+        p_value_matrix = self.__phred_lines_to_array(phred_score_lines, matrix)
         # Calculate average P value per base.
         average_p_value_per_base = np.nanmean(p_value_matrix, axis=0)
         output_queue.put(average_p_value_per_base)
@@ -34,22 +34,33 @@ class AveragePhredCalculator:
     @lru_cache(maxsize=None)
     def calculate_p_value_from_phred(char):
         """
-        TODO
+        Calculates the P value from a Phred score character. The specified character is first converted
+        to its ASCII value and then converted to its respective P-value. Makes use of the lru_cache
+        decorator (with maxsize=None, disregarding the 'least-recently-used' operations) allowing this
+        function to be memoized.
+        :param char: Phred score character to be converted to P-value.
+        :return: P-value of a given Phred score character.
         """
         return 10 ** (-(ord(char) - 33) / 10)
 
     @staticmethod
     def calculate_phred_from_p_value(p_value_array):
         """
-        :param p_value_array:
-        :return:
+        Converts a Numpy array of P-values to one of Phred scores.
+        :param p_value_array: a Numpy array of P-values.
+        :return: a Numpy array of Phred scores.
         """
-        # Convert P values back to Phred values (Q Score).
         return -10 * np.log10(p_value_array)
 
     def __get_phred_score_lines(self, file_path, start, stop):
         """
-        TODO
+        Retrieves the Phred score quality lines from a specified section of a given FastQ file.
+        A section is denoted by a start and stop line count. Uses unix sed to stream Phred score
+        lines into memory.
+        :param file_path: file path to a FastQ file.
+        :param start: line count from which Phred lines should be retrieved.
+        :param start: line count to which Phred lines should be retrieved.
+        :return phred_score_lines: a list of stripped Phred score lines.
         """
         # Create a sed process that parses every 4th line (0~4p).
         get_4th_lines = subprocess.Popen("sed -n '{start}~4p;{stop}q' {file_path} "
@@ -61,31 +72,30 @@ class AveragePhredCalculator:
         phred_score_lines = [line.strip() for line in get_4th_lines.stdout.readlines()]
         return phred_score_lines
 
-    def __preallocate_numpy_matrix(self, phred_score_lines, max_read_length):
+    def __preallocate_numpy_array(self, phred_score_lines, max_read_length):
         """
-        Preallocate a numpy matrix containing NaN values given a list of Phred score strings.
-        Its dimensions are (number of phred strings in subset, overall longest read length).
+        Preallocate a numpy array containing NaN values given a list of Phred score strings.
+        Its dimensions are (no. of strings in list, longest string  in list).
 
         :param phred_score_lines: list of Phred score strings.
-        :return phred_score_matrix: numpy matrix filled with NaN values for every possible base location.
+        :return phred_score_matrix: Numpy 2D array filled with NaN values.
         """
         rows = len(phred_score_lines)
         columns = max_read_length
-
-        # Using data-type 8-bit unsigned integer (u1) to save memory (Phred scores can't be negative nor > 104).
+        # Using data-type 32-bit float for storage of P-values.
         phred_score_matrix = np.full(shape=(rows, columns), dtype=np.dtype("float32"), fill_value=np.nan)
 
         return phred_score_matrix
 
-    def __phred_lines_to_matrix(self, phred_score_lines, matrix):
+    def __phred_lines_to_array(self, phred_score_lines, matrix):
         """
-        Iterates over a list of Phred score strings, calculating the ASCII value of its characters
-        and placing those values in a given Phred score matrix. Indices of the matrix are (read, base index),
+        Iterates over a list of Phred score strings, calculating the P-value value of its characters
+        and placing those values in a given 2D Numpy array. Indices of the array are (read, base index),
         where reads shorter than the overall longest read will have trailing NaNs.
 
         :param phred_score_lines: list of Phred score strings.
-        :param phred_score_matrix: numpy matrix filled with NaN values.
-        :return phred_score_matrix: numpy matrix filled with integers (where applicable) or NaN values.
+        :param matrix: A 2D Numpy array filled with NaN values.
+        :return matrix: Numpy 2D array filled with P-values (where applicable) or NaN values.
         """
         for i, phred_line in enumerate(phred_score_lines):
             matrix[i, 0: len(phred_line)] = [AveragePhredCalculator.calculate_p_value_from_phred(char)
@@ -97,7 +107,9 @@ class AveragePhredCalculator:
 class Client:
     def __init__(self, file_path, no_processes, server_ip, client, port, authkey):
         """
-        TODO
+        Object used when running this script as a Client. Attempts communication with a specified
+        socket and assigns local processes to perform average Phred score calculations, returning
+        their results to the server.
         """
         self.client = client
         self.file_path = file_path
@@ -109,7 +121,12 @@ class Client:
 
     def __make_client_manager(self, server_ip, port, authkey):
         """
-        TODO
+        Declares a multiprocessing manager which will attempt connection on a given server_IP and
+        port. Returns this manager if a connection was established successfully.
+        :param server_ip: IP to attempt connecting to.
+        :param port: port to communicate with to server.
+        :param authkey: authentication key to use when connecting to server.
+        :return manager: multiprocessing manager with an active connection to the server.
         """
         # Initialize ClientManager class and methods.
         class ClientManager(BaseManager):
@@ -123,7 +140,7 @@ class Client:
             manager = ClientManager(address=(server_ip, port), authkey=authkey)
             manager.connect()
         except ConnectionRefusedError:
-            # Failed to connect, a timer of the client's socket manager will attempt a reconnect.
+            # Failed to connect, the timer of the client's server manager will attempt a reconnect.
             print("{client}> Failed to connect to {server}:{port}, retrying..."
                   .format(client=self.client, server=server_ip, port=port))
         else:
@@ -133,7 +150,9 @@ class Client:
 
     def __send_heartbeat(self, result_queue):
         """
-        TODO
+        Adds a heartbeat signal (string) to a given queue, then after a short delay performs recursion.
+        Must be called with a background (daemon) process as it is designed to not halt.
+        :param result_queue: queue to put heartbeat signal into.
         """
         result_queue.put("HEARTBEAT")
         time.sleep(5)
@@ -141,13 +160,15 @@ class Client:
 
     def __run_client(self):
         """
-        TODO
+        Starts operations on the client: retrieving jobs from a server, starting processes to perform
+        this job, and returning the result to the server. Whilst active a heartbeat signal will be send
+        from a background process running on the client.
         """
         job_queue = self.manager.get_job_queue()
         result_queue = self.manager.get_result_queue()
 
         # Start sending heartbeat signals to the server.
-        # Daemon such that the timer process ends when the client is finished.
+        # Daemon such that the heartbeat signal ends when the client is finished or crashes.
         timer = mp.Process(target=self.__send_heartbeat, args=(result_queue,), daemon=True)
         timer.start()
 
@@ -156,9 +177,10 @@ class Client:
                 job = job_queue.get_nowait()
 
                 if job == "KILL":
+                    # End operations on this client.
                     break
                 else:
-                    # Get assigned job and start processes.
+                    # Retrieve assigned job and start processes.
                     chunk_indices = job["chunk"]
                     results = self.__start_processes(chunk_indices)
                     result_queue.put(results)
@@ -168,12 +190,14 @@ class Client:
 
     def __start_processes(self, chunk_indices):
         """
-        TODO
+        Splits a client's assigned job over a number of processes, waits for processes to complete and
+        returns their output.
+        :param chunk_indices: indices of the client's assigned job.
+        :return p_value_average: average P-values of all Phred score lines in a section of a FastQ file.
         """
         processes = []
         output_queue = mp.Queue()
-
-        # Initialize data division related variables.
+        # Declare data division related variables.
         phred_line_count = chunk_indices[1] - chunk_indices[0]
         chunks = calculate_chunk_indices(phred_line_count, self.no_processes)
 
@@ -188,11 +212,11 @@ class Client:
         for p in processes:
             p.join()
 
-        # Retrieve output from processes and average it over the amount of processes.
+        # Retrieve output from processes and average it.
         concat_p_value_arrays = concatenate_uneven_numpy_arrays([output_queue.get() for p in processes])
-        p_average = np.sum(concat_p_value_arrays, axis=0) / self.no_processes
+        p_value_average = np.nanmean(concat_p_value_arrays, axis=0)
 
-        return p_average
+        return p_value_average
 
 
 class Server:
@@ -211,7 +235,6 @@ class Server:
         # Client arguments
         self.input_file_path = input_file_path
         self.no_processes = no_processes
-
         # Server arguments.
         self.server_ip = server_ip
         self.port = port
@@ -282,11 +305,16 @@ class Server:
 
     def run_server(self):
         """
-        TODO
+        Runs the server to perform a number of job, executing the following actions for every socket,
+        as long as not all jobs are finished:
+            - Check if client is connected and in need of a job.
+            - If not, check if client has disconnected whilst working ona job.
+            - Check the results queue for heartbeats or results and handle them., if it's not empty.
+        :return phred_score_average: Numpy array containing average phred score for bases in a FastQ file.
         """
         results = []
 
-        # Define queue containing unassigned jobs shared among all clients.
+        # Define queue to contain jobs that are still unassigned.
         unassigned_job_queue = queue.Queue()
         for i, chunk in enumerate(self.chunk_indices):
             unassigned_job_queue.put({"job_id": i + 1, "chunk": chunk})
@@ -311,7 +339,7 @@ class Server:
                                                                                client=client))
 
                 # Should a client disconnect whilst working on a job, put that job back in unassigned job queue.
-                elif socket["job"] is not None and not socket["timer"].is_alive():
+                elif not socket["timer"].is_alive() and socket["job"] is not None:
                     print("> {client} has disconnected whilst operating on job {job}, attempting to reconnect"
                           .format(client=socket["client"],
                                   job=socket["job"]))
@@ -320,7 +348,7 @@ class Server:
                     socket["job"] = None
 
                 # Handle heartbeats and calculated results placed in results queue.
-                for r in range(result_queue.qsize()):
+                while not result_queue.empty():
                     result = result_queue.get()
                     # Handle heartbeat to know that server is still connected.
                     if isinstance(result, str) and result == "HEARTBEAT":
@@ -351,9 +379,9 @@ class Server:
         concatenated_results = concatenate_uneven_numpy_arrays(results)
         mean_results = np.nanmean(concatenated_results, axis=0)
         # Convert P values back to Phred values (Q Score).
-        phred_average = AveragePhredCalculator.calculate_phred_from_p_value(mean_results)
+        phred_score_average = AveragePhredCalculator.calculate_phred_from_p_value(mean_results)
 
-        return phred_average
+        return phred_score_average
 
 
 # --- HELPER FUNCTIONS ---
