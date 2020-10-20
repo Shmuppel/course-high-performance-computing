@@ -1,0 +1,48 @@
+# Design patterns in opdracht 1:
+
+ProcessManager - composite 
+Aangezien we de processes als een soort van 'branching' van de host
+computer kunnen zien vond ik dit wel een handige implementatie. Dit 
+is makkelijk toe te passen in andere projecten. Het object verzameld
+een lijst aan processen en kan hierover itereren om ze bijvoorbeeld te 
+starten.
+
+
+# Design patterns in opdracht 3:
+ProcessManager - composite 
+Zie hierboven
+
+Server - singleton
+Spreekt voorzich natuurlijk, er kan maar een server object gebruik maken 
+van de sockets die voor communicatie gebruikt worden. Dit object is 
+gelimiteerd aan een instance.
+
+Server - composite
+Dit is een design pattern die ik er al in had, de server stored eigenlijk 
+zijn sockets om hier over heen te itereren (wederom: ik vind dat het composite
+design pattern wel mooi werkt hier i.v.m. de branching star map structuur van
+dit programma). 
+
+Client / AveragePhredCalculatorClient - decorator
+Zorgt ervoor dat de basis functionaliteit (initializeren manager, 
+heartbeat, communicatie) tot een basis classe behoord. Het decorator 
+object kan dan een andere implementatie van bijvoorbeeld de perform_job
+functie uitvoeren. 
+
+MultiprocessingManger / ServerProxy / ClientProxy - decorator (proxy)
+Beetje dubbel op deze, maar zoals ik het zie zijn de multiprocessing managers
+zelf (de MultiProccesingManager klasse) een proxy. De ServerProxy / ClientProxy
+zijn decorators om de manager op hun eigen manier te starten. Dus of om
+de server te starten dan wel om te connecten met de server.
+
+# Opdracht 2
+Zoals je ziet ontbreekt opdracht 2.
+Tussen opdracht 2 en 3 verschilt voor mijn code niet al te veel (beide waren
+al object georienteerd), alleen voor opdracht 3 heb ik destijds al gerefactord om 
+de code netter te maken en onder de juiste onderdelen te verdelen. Als ik opdracht 2 nu 
+weer zou reformatten zou ik het er eigenlijk uit laten zien als opdracht 3 (min de extra functionaliteit). 
+Aangezien ik die reformatting al een keer gedaan heb leek het me niet heel leerzaam om dat 
+nog een keer uit te voeren; alleen om verouderde code in een andere design pattern te refactoren.
+
+Jammer als dat een lager cijfer opleverd maar dat neem ik je natuurlijk niet kwalijk. 
+
